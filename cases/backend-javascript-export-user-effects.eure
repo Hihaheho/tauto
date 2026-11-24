@@ -1,0 +1,73 @@
+// The effects an exported function may perform are the library's, told by
+// identity: an effect the program declares under the same name (`ref_get`,
+// `spawn`) is in the export's `foreign_row`, which the JavaScript build
+// refuses, also when its `spawn` takes a body that performs a library effect.
+
+@ cases.export-user-effect-named-as-storage
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package {
+  name = "export-user"
+  version = "0.1.0"
+}
+exports = ["h"]
+```
+files."app/src/main.taut" = ```tauto
+effect ref_get(): u64
+
+fn h(): u64 ! {ref_get} {
+  perform ref_get()
+}
+#()
+```
+nir.target = "llvm"
+nir.exports = ```nir
+export "export-user::main::h" = h@1 row("export_user::src::main::ref_get") foreign_row("export_user::src::main::ref_get") pure_borrow_callbacks()
+```
+
+@ cases.export-user-effect-named-spawn
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package {
+  name = "export-user"
+  version = "0.1.0"
+}
+exports = ["g"]
+```
+files."app/src/main.taut" = ```tauto
+effect ref_get(): u64
+effect spawn<A>(f: () -> A ! {ref_get}): A
+
+fn g(): u64 ! {spawn(u64)} {
+  perform spawn(() => perform ref_get())
+}
+#()
+```
+nir.target = "llvm"
+nir.exports = ```nir
+export "export-user::main::g" = g@1 row("export_user::src::main::spawn@u64") foreign_row("export_user::src::main::spawn@u64") pure_borrow_callbacks()
+```
+
+@ cases.export-user-spawn-with-library-effect
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package {
+  name = "export-user"
+  version = "0.1.0"
+}
+exports = ["g"]
+```
+files."app/src/main.taut" = ```tauto
+import std::builtin::os { hash_seed, HashSeed }
+
+effect spawn<A>(f: () -> A ! {hash_seed}): A
+
+fn g(): HashSeed ! {spawn(HashSeed)} {
+  perform spawn(() => perform hash_seed())
+}
+#()
+```
+nir.target = "llvm"
+nir.exports = ```nir
+export "export-user::main::g" = g@1 row("export_user::src::main::spawn@HashSeed") foreign_row("export_user::src::main::spawn@HashSeed") pure_borrow_callbacks()
+```

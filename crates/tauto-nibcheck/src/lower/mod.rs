@@ -1571,19 +1571,7 @@ impl<'a> Lowerer<'a> {
                 let row: Vec<String> = names.iter().map(ToString::to_string).collect();
                 let foreign_row: Vec<String> = names
                     .iter()
-                    .filter(|n| {
-                        ![
-                            "stdout",
-                            "stdout_flush",
-                            "div",
-                            "budget",
-                            "budget_memory",
-                            "wait",
-                            "spawn",
-                        ]
-                        .iter()
-                        .any(|l| tauto_surface::bindings::is_library_effect(n, l))
-                    })
+                    .filter(|n| !export_may_perform(n))
                     .map(ToString::to_string)
                     .collect();
                 exports.push(Export {
@@ -3990,4 +3978,56 @@ fn fn_values_only(f: &FnInst) -> bool {
         };
     });
     ok
+}
+
+/// The library's effects an export may perform: the instance answers them
+/// itself, outside `Host::run`.
+const EXPORT_EFFECTS: [&str; 21] = [
+    "stdout",
+    "stdout_flush",
+    "div",
+    "budget",
+    "budget_memory",
+    "wait",
+    "spawn",
+    "ref_new",
+    "ref_get",
+    "ref_set",
+    "weak_of",
+    "weak_get",
+    "mutex_new",
+    "mutex_claim",
+    "mutex_take_claimed",
+    "mutex_put",
+    "mutex_withdraw",
+    "atomic_new",
+    "atomic_load",
+    "atomic_store",
+    "atomic_fetch_add",
+];
+
+/// Whether an export may perform `effect`, told by identity. An instance of
+/// `spawn` (`spawn(u64)`) and the label of a task's row (`spawn@^hash_seed`)
+/// are `spawn` and the effects it holds.
+fn export_may_perform(effect: &Name) -> bool {
+    use crate::types::indices::split_index_label;
+    use tauto_surface::bindings::{is_library_effect, is_library_instance};
+    let listed = |name: &Name| {
+        EXPORT_EFFECTS
+            .iter()
+            .chain(&["hash_seed"])
+            .any(|l| is_library_effect(name, l) || (*l != "div" && is_library_instance(name, l)))
+    };
+    if let Some((family, member)) = split_index_label(effect) {
+        // The spawn label holds an effect of the task's row.
+        return family == "spawn"
+            && listed(&Name::from(family.as_str()))
+            && listed(&Name::from(member.as_str()));
+    }
+    if listed(effect) {
+        return true;
+    }
+    // A specialization spelled `spawn@u64` of the library's `spawn`.
+    let text = effect.to_string();
+    matches!(effect, Name::Spelled(_)) && text.split('@').next() == Some("spawn")
 }

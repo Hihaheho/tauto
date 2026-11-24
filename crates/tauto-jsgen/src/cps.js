@@ -224,6 +224,8 @@ function handleValue(body,arms,ret) {
         }));
     };
 }
+// The builtin that answers a storage operation, as `Host::run` answers it.
+const STORAGE_BUILTINS={ref_new:'Ref::new',ref_get:'Ref::get',ref_set:'Ref::set',weak_of:'Weak::of',weak_get:'Weak::get',mutex_new:'Mutex::new',mutex_claim:'Mutex::claim',mutex_take_claimed:'Mutex::take_claimed',mutex_put:'Mutex::put',mutex_withdraw:'Mutex::withdraw',atomic_new:'Atomic::new',atomic_load:'Atomic::load',atomic_store:'Atomic::store',atomic_fetch_add:'Atomic::fetch_add'};
 function performValue(op,quant,args) {
     return values(args,(c,vs,k)=>route(c,op,quant,vs,k));
 }
@@ -238,6 +240,18 @@ function route(c,op,quant,vs,k,inside=null,skip=null) {
             // The host answers `overflow` and `divzero` by stopping the program.
             if(op==='overflow'&&vs.length===0)throw new Error('the number is too large');
             if(op==='divzero'&&vs.length===0)throw new Error('division by zero');
+            // A task and an exported function run outside the handler
+            // `Host::run` installs, so what they perform on a `Ref`, a `Weak`,
+            // a `Mutex` or an `Atomic` is answered here by the builtin that
+            // `Host::run` answers it with.
+            const storage=STORAGE_BUILTINS[op];
+            if(storage)return builtin(storage,vs.map(pure))(c,k);
+            // So is `hash_seed`, with the seed `Host::run` gives: one for the
+            // whole run, new for each run.
+            if(hashSeedAnswer&&op===hashSeedAnswer.op&&vs.length===0)return builtin('Os::hash_seed_k0',[])(c,(d,k0)=>builtin('Os::hash_seed_k1',[])(d,(e,k1)=>{
+                const a=hashSeedAnswer,fields=[];fields[a.k0]=k0;fields[a.k1]=k1;
+                return more(()=>k(e,construct(a.tag,a.names,fields,[0,1],true,a.owner)));
+            }));
             throw new Error('nothing handles '+op);
         }
         if(frame.callback && quant!=='direct' && frame.id!==skip?.id)return frame.suspend(c,op,quant,vs,k);

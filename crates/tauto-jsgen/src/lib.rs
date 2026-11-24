@@ -106,6 +106,7 @@ mod identity_tests {
 
     #[test]
     fn data_symbols_preserve_unique_host_names_and_separate_colliding_ids() {
+        tauto_parse::install();
         let data = |name: Name| tauto_nir::DataDef {
             name,
             generics: Vec::new(),
@@ -135,6 +136,7 @@ mod identity_tests {
 
     #[test]
     fn runtime_constructor_tags_require_the_library_identity() {
+        tauto_parse::install();
         let some = tauto::bindings::library_name("Some");
         assert_eq!(constructor_symbol(&Package::default(), &some), "Some");
         let foreign = Name::Global(tauto::identity::DeclRef::fresh(some.as_str()));

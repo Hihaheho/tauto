@@ -122,7 +122,53 @@ fn host_signatures(pkg: &Package, options: &Options) -> R<String> {
         "const hostWaits=new Set([{}]);\n",
         waits.join(",")
     ));
+    out.push_str(&hash_seed_answer(pkg));
     Ok(out)
+}
+
+/// How the runtime makes the answer to the library's `hash_seed` performed
+/// outside `Host::run` (by an exported function or a task): the operation's
+/// symbol and the `HashSeed` it answers with, which only the package names.
+fn hash_seed_answer(pkg: &Package) -> String {
+    let answer = pkg
+        .ops
+        .iter()
+        .find(|o| tauto::bindings::is_library_effect(&o.name, "hash_seed"))
+        .and_then(|o| match &o.result {
+            Ty::Data(n, args) if args.is_empty() => pkg
+                .datas
+                .iter()
+                .find(|d| d.name == *n && d.is_struct && d.ctors.len() == 1)
+                .map(|d| (o, d)),
+            _ => None,
+        })
+        .and_then(|(o, d)| {
+            let ctor = &d.ctors[0];
+            let names: Vec<_> = ctor
+                .fields
+                .iter()
+                .map(|f| f.name.as_deref())
+                .collect();
+            let at = |n: &str| names.iter().position(|f| *f == Some(n));
+            let (k0, k1) = (at("k0")?, at("k1")?);
+            (names.len() == 2).then(|| {
+                format!(
+                    "{{op:{},tag:{},names:[{}],k0:{k0},k1:{k1},owner:{}}}",
+                    quote(&crate::operation_symbol(pkg, &o.name)),
+                    quote(crate::constructor_symbol(pkg, &ctor.name)),
+                    names
+                        .iter()
+                        .map(|n| quote(n.unwrap_or_default()))
+                        .collect::<Vec<_>>()
+                        .join(","),
+                    quote(&crate::owner_symbol(pkg, &d.name)),
+                )
+            })
+        });
+    format!(
+        "const hashSeedAnswer={};\n",
+        answer.unwrap_or_else(|| "null".into())
+    )
 }
 
 /// Whether a function reaches the host other than through `show`.
@@ -205,8 +251,10 @@ pub(crate) fn export_table<'p>(pkg: &'p Package, options: &Options) -> R<Vec<Exp
         };
         // A task the export starts runs on in the instance after the call
         // returns, until the instance is disposed. The allowed effects are the
-        // library's `show`, `div`, `wait` and `spawn`, told by identity: a
-        // user effect of the same spelling is not one of them.
+        // library's `show`, `div`, `wait`, `spawn`, `hash_seed` and the
+        // operations on a `Ref`, a `Weak`, a `Mutex` or an `Atomic`, which the
+        // runtime answers as it does for a task; told by identity: a user
+        // effect of the same spelling is not one of them.
         if let Some(effect) = export.foreign_row.first() {
             return Err(msg!("jsgen-export-performs", name = name, effect = effect).to_string());
         }

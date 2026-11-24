@@ -2,7 +2,7 @@ $schema: changelog.schema.eure
 
 base = "a6982fb2d139322d9bf84a54eaa40fa18415ddad"
 summary = ````markdown
-Two fixes: `tauto check` on a tote whose test body, in a file that is not the entry, calls a function with an effect indexed by a type; and the JavaScript backend's copy of a host object bound by a handler arm.
+Exported functions of the JavaScript backend may use a `Ref`, a `Weak`, a `Mutex`, an `Atomic` and `hash_seed`; and two fixes: `tauto check` on a tote whose test body, in a file that is not the entry, calls a function with an effect indexed by a type, and the JavaScript backend's copy of a host object bound by a handler arm.
 ````
 
 @ fixed[]
@@ -21,4 +21,13 @@ The JavaScript backend keeps the contents of a host object (a `Map`, a `Set`, a 
 ````
 details = ````markdown
 A `HashMap` handed through a handler arm into a `Mutex` lost its buckets.
+````
+
+@ changed[]
+area = "backends"
+summary = ````markdown
+A function listed in `exports` for the JavaScript backend may use a `Ref`, a `Weak`, a `Mutex`, an `Atomic` and `hash_seed`, and may spawn tasks that do.
+````
+details = ````markdown
+Its row may hold `ref_new`, `ref_get`, `ref_set`, `weak_of`, `weak_get`, the `mutex_*` and `atomic_*` operations and `hash_seed`, which the instance answers as `Host::run` would; an instance of `spawn` (`spawn(u64)`); and a `spawn` whose task's row holds only these effects. A function whose row, or whose task's row, holds another host effect (`wall_clock`) is still an error.
 ````

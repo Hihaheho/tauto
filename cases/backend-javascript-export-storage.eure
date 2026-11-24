@@ -1,0 +1,48 @@
+// An exported function may use a `Ref`, a `Weak`, a `Mutex`, an `Atomic` and
+// `hash_seed`: the runtime answers them as `Host::run` would, so they are not
+// in the export's `foreign_row`, which the JavaScript build refuses. Another
+// host effect (`wall_clock`) still is.
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package {
+  name = "export-storage"
+  version = "0.1.0"
+}
+exports = ["f", "g", "h"]
+```
+files."app/src/main.taut" = ```tauto
+import std::builtin::par { ref_get, ref_new, ref_set, weak_of, weak_get, mutex_new, mutex_claim, mutex_take_claimed, mutex_put, atomic_new, atomic_load, atomic_store, atomic_fetch_add }
+import std::builtin::os { hash_seed, wall_clock }
+
+fn f(): u64 ! {ref_new, ref_get, ref_set, weak_of, weak_get, mutex_new, mutex_claim, mutex_take_claimed, mutex_put, atomic_new, atomic_load, atomic_store, atomic_fetch_add} {
+  let r := perform ref_new(1)
+  perform ref_set(r, 2)
+  let w := perform weak_of(r)
+  let a := match perform weak_get(w) { Some(x) => perform ref_get(x), None => 0 }
+  let m := perform mutex_new(5)
+  let s := perform mutex_claim(m)
+  let v := perform mutex_take_claimed(m, s)
+  perform mutex_put(m, v)
+  let c := perform atomic_new(1)
+  perform atomic_store(c, 3)
+  let n := perform atomic_fetch_add(c, 1)
+  let l := perform atomic_load(c)
+  if a == 2 { v } else { if n == 3 { l } else { 0 } }
+}
+
+fn g(): u64 ! {hash_seed} {
+  let s := perform hash_seed()
+  s.k0
+}
+
+fn h(): i64 ! {wall_clock} {
+  perform wall_clock()
+}
+#()
+```
+nir.target = "llvm"
+nir.exports = ```nir
+export "export-storage::main::f" = f@1 row("ref_new", "ref_get", "ref_set", "weak_of", "weak_get", "mutex_new", "mutex_claim", "mutex_take_claimed", "mutex_put", "atomic_new", "atomic_load", "atomic_store", "atomic_fetch_add") foreign_row() pure_borrow_callbacks()
+export "export-storage::main::g" = g@2 row("hash_seed") foreign_row() pure_borrow_callbacks()
+export "export-storage::main::h" = h@3 row("wall_clock") foreign_row("wall_clock") pure_borrow_callbacks()
+```

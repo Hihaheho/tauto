@@ -1158,9 +1158,10 @@ pub struct Export {
     pub inst: InstId,
     pub name: String,
     pub row: Vec<String>,
-    /// The effects of `row` that are not the library's `show`, `div`, `wait`
-    /// or `spawn`: decided by identity when lowering, since the spelling of a
-    /// user effect may equal a library one.
+    /// The effects of `row` that are not the library's `show`, `div`, `wait`,
+    /// `spawn`, `hash_seed` or an operation on a `Ref`, a `Weak`, a `Mutex` or
+    /// an `Atomic`: decided by identity when lowering, since the spelling of
+    /// a user effect may equal a library one.
     pub foreign_row: Vec<String>,
     /// Parameters declared as shared borrows of functions with an empty row.
     /// Recorded before representation optimizations can introduce borrows.

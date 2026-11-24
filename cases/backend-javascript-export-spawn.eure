@@ -1,0 +1,109 @@
+// An exported function whose row names `spawn` is not refused by the
+// JavaScript build when it is an instance (`spawn(u64)`) or when the task's
+// row holds only effects the instance answers itself (`hash_seed`, `ref_new`,
+// `ref_get`): `spawn@u64` and `spawn@^hash_seed` are `spawn` and the effects
+// it holds, so they are not in the export's `foreign_row`. A task whose row
+// holds a host effect the instance does not answer (`wall_clock`) still is.
+
+@ cases.export-spawn-instance
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package {
+  name = "export-spawn"
+  version = "0.1.0"
+}
+exports = ["typed"]
+```
+files."app/src/main.taut" = ```tauto
+import std::builtin::par { spawn, wait, Task }
+
+fn typed(): u64 ! {spawn(u64), wait} {
+  let t := perform spawn(() => 1 + 1)
+  Task::join(t)
+}
+#()
+```
+nir.target = "llvm"
+nir.exports = ```nir
+export "export-spawn::main::typed" = typed@1 row("wait", "spawn@u64") foreign_row() pure_borrow_callbacks()
+```
+
+@ cases.export-spawn-task-hash-seed
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package {
+  name = "export-spawn"
+  version = "0.1.0"
+}
+exports = ["f"]
+```
+files."app/src/main.taut" = ```tauto
+import std::builtin::os { hash_seed }
+import std::builtin::par { spawn, Task }
+
+fn work(): Bool ! {hash_seed} {
+  let s := perform hash_seed()
+  s.k0 == 0
+}
+
+fn f(): Unit ! {∀ T. spawn(() -> T ! {hash_seed})} {
+  Task::detach(perform spawn(() => work()))
+}
+#()
+```
+nir.target = "llvm"
+nir.exports = ```nir
+export "export-spawn::main::f" = f@1 row("spawn@^hash_seed", "spawn") foreign_row() pure_borrow_callbacks()
+```
+
+@ cases.export-spawn-task-ref
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package {
+  name = "export-spawn"
+  version = "0.1.0"
+}
+exports = ["f"]
+```
+files."app/src/main.taut" = ```tauto
+import std::builtin::par { spawn, Task, ref_get, ref_new }
+
+fn work(): u64 ! {ref_new, ref_get} {
+  let r := perform ref_new(7)
+  perform ref_get(r)
+}
+
+fn f(): Unit ! {∀ T. spawn(() -> T ! {ref_new, ref_get})} {
+  Task::detach(perform spawn(() => work()))
+}
+#()
+```
+nir.target = "llvm"
+nir.exports = ```nir
+export "export-spawn::main::f" = f@1 row("spawn@^ref_get", "spawn@^ref_new", "spawn") foreign_row() pure_borrow_callbacks()
+```
+
+@ cases.export-spawn-task-host-effect-refused
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package {
+  name = "export-spawn"
+  version = "0.1.0"
+}
+exports = ["f"]
+```
+files."app/src/main.taut" = ```tauto
+import std::builtin::os { wall_clock }
+import std::builtin::par { spawn, Task }
+
+fn work(): i64 ! {wall_clock} { perform wall_clock() }
+
+fn f(): Unit ! {∀ T. spawn(() -> T ! {wall_clock})} {
+  Task::detach(perform spawn(() => work()))
+}
+#()
+```
+nir.target = "llvm"
+nir.exports = ```nir
+export "export-spawn::main::f" = f@1 row("spawn@^wall_clock", "spawn") foreign_row("spawn@^wall_clock") pure_borrow_callbacks()
+```

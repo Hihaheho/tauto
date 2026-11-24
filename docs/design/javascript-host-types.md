@@ -46,9 +46,14 @@ exports = ["add", "render"]
 
 `program.mjs` exports `instantiate(externs, options)`; importing it runs
 nothing and an instance does not run the top-level expression. Each listed
-function becomes a method. Its row may hold only `show`, `div`, std `wait` and
-`spawn`: a function named in `exports` with another effect is an error, and one
-a `TOTE::*` brought is left out with a warning. Spawned tasks keep running in the instance after
+function becomes a method. Its row may hold only `show`, `div`, std `wait`,
+`spawn`, `hash_seed` and the operations on a `Ref`, a `Weak`, a `Mutex` or an
+`Atomic` (`ref_new`, `ref_get`, `ref_set`, `weak_of`, `weak_get`, `mutex_*`,
+`atomic_*`), which the runtime answers as `Host::run` would. `spawn` may be an
+instance (`spawn(u64)`), and the row of a task it starts may hold only these
+effects. They are told by identity: an effect the program declares under one of
+these names is not one of them. A function named in `exports` with another
+effect is an error, and a function a `TOTE::*` brought is left out with a warning. Spawned tasks keep running in the instance after
 the call returns and stop at their next step after `dispose()`.
 
 Values cross as for externs ([`javascript-backend.md`](javascript-backend.md#host-bindings)), plus:
