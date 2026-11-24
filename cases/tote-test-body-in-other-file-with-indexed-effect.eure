@@ -1,0 +1,57 @@
+description = "A tote's file that is not its entry may call, at its top level (in the body of a `perform test(...)`), a function with an effect indexed by a type (`context(A)`, which `with_context` handles). The call gets the copy the effect's type asks for as it does when the file is the only one: adding an unrelated file to the tote does not change what `tauto check` says."
+
+@ cases.test-body-calls-indexed-effect-with-an-unrelated-file
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/lib.taut" = ```tauto
+pub effect context<A>(): A direct
+
+pub fn use_context<A>(): A ! {context(A)} { perform context() }
+
+pub fn with_context<A, T, !e>(value: A, body: () -> T ! {context(A)} ∪ e): T ! e {
+  handle { body() } with {
+    context<A>(), k => k(value)
+    return v => v
+  }
+}
+```
+files."app/src/a.taut" = ```tauto
+import "lib.taut" { with_context, use_context }
+perform test("a", () => {
+  let y: u64 := with_context((3: u64), () => use_context())
+  expect(y == 3, "ok")
+})
+```
+files."app/src/z.taut" = ```tauto
+fn x(): Unit { #() }
+```
+
+@ cases.test-body-calls-constrained-generic-and-indexed-effect
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/lib.taut" = ```tauto
+pub effect context<A>(): A direct
+
+pub fn use_context<A>(): A ! {context(A)} { perform context() }
+
+pub fn with_context<A, T, !e>(value: A, body: () -> T ! {context(A)} ∪ e): T ! e {
+  handle { body() } with {
+    context<A>(), k => k(value)
+    return v => v
+  }
+}
+
+pub fn keep<A: Shared>(x: A): A { x }
+```
+files."app/src/a.taut" = ```tauto
+import "lib.taut" { with_context, use_context, keep }
+perform test("a", () => {
+  let y: u64 := with_context((3: u64), () => use_context())
+  expect(keep(y) == 3, "ok")
+})
+```
+files."app/src/z.taut" = ```tauto
+fn x(): Unit { #() }
+```

@@ -1,0 +1,36 @@
+// A `HashMap` handed through a handler arm into a `Mutex`, written through the
+// guard, reset with `*inner := HashMap::with_seed(..)` and written again. The
+// value a handler arm binds is a host map; a copy of it stands for the same map
+// and keeps its buckets.
+@ cases.hashmap-in-mutex-reset-then-insert
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+import std::hashmap { HashMap }
+import std::builtin::par
+
+effect keep(m: HashMap(u64, u64)): Unit
+
+fn alone_with<A, R>(m: Mutex(A), f: &((x: &mut A) -> R)): R ! {wait, mutex_claim} {
+  var guard := Mutex::lock(m)
+  f(MutexGuard::get_mut(&mut guard))
+}
+
+handle { perform keep(HashMap::new()) } with {
+  keep(m), k => {
+    let t: Mutex(HashMap(u64, u64)) := perform mutex_new(m)
+    alone_with(t, (inner) => { HashMap::insert(&mut inner, 1, 10); #() })
+    alone_with(t, (inner) => {
+      *inner := HashMap::with_seed(HashMap::seed(&inner))
+      #()
+    })
+    alone_with(t, (inner) => { HashMap::insert(&mut inner, 2, 20); #() })
+    show(&alone_with(t, (inner) => match HashMap::get(&inner, &2) { Some(v) => v, None => 0 }))
+    show(&alone_with(t, (inner) => HashMap::len(&inner)))
+    k(#())
+  }
+}
+```
+stdout = ```
+20
+1
+```

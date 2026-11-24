@@ -917,11 +917,26 @@ fn functions(stmts: &[Stmt]) -> HashMap<Name, FnDecl> {
 /// `is_prelude` says that `program` is the prelude itself: it is expanded as
 /// a program of its own, checked against itself; it keeps the functions it
 /// copies, which a program's calls copy into the program.
-pub fn expand_indices(program: &mut Program, per_file: &mut [Vec<Stmt>], is_prelude: bool) {
+pub fn expand_indices(
+    program: &mut Program,
+    per_file: &mut [Vec<Stmt>],
+    imported: &[Stmt],
+    is_prelude: bool,
+) {
     every_instance(program, per_file, is_prelude);
+    // The top levels of imported files (a dependency's `perform test(...)`)
+    // are read with the program, as the class expansion reads them: a call
+    // in one of them gives the copy it needs, though they are in `per_file`
+    // and not in `program`.
+    let with_imports = if is_prelude {
+        None
+    } else {
+        super::expand::with_imported(program, imported)
+    };
     let mut indexed = indexed_effects(program);
     if !is_prelude {
-        if indexed.is_empty() && !touches_indexed(program) {
+        let seen = with_imports.as_ref().unwrap_or(program);
+        if indexed.is_empty() && !touches_indexed(seen) {
             return;
         }
         indexed.extend(indexed_effects(prelude_for(program)));
@@ -929,18 +944,28 @@ pub fn expand_indices(program: &mut Program, per_file: &mut [Vec<Stmt>], is_prel
     if indexed.is_empty() {
         return;
     }
-    let report = if is_prelude {
-        check_program_in(program, program)
-    } else {
-        check_program_in(program, prelude_for(program))
+    let check = |p: &Program| {
+        if is_prelude {
+            check_program_in(p, p)
+        } else {
+            check_program_in(p, prelude_for(p))
+        }
     };
+    let mut checked = with_imports.as_ref().unwrap_or(program);
+    let mut report = check(checked);
+    if !report.errors.is_empty() && with_imports.is_some() {
+        // What does not check with the imported top levels is
+        // not reported here; the program alone keeps expanding.
+        checked = program;
+        report = check(checked);
+    }
     if !report.errors.is_empty() {
         return;
     }
-    let mut x = Expander::new(program, &report, indexed, is_prelude);
+    let mut x = Expander::new(checked, &report, indexed, is_prelude);
     if !is_prelude && x.row_indexed() {
         x.rows = Some(super::check_program_rows_as_types(
-            program,
+            checked,
             prelude_for(program),
         ));
     }

@@ -171,7 +171,7 @@ pub fn expand_classes(mut program: Program, synthetic: u32) -> Program {
     super::coerce::expand_coercions(&mut program, &mut []);
     super::lend::expand_lends(&mut program, &mut []);
     expand(&mut program, &mut Vec::new(), &[], synthetic, true);
-    super::indices::expand_indices(&mut program, &mut [], false);
+    super::indices::expand_indices(&mut program, &mut [], &[], false);
     program
 }
 
@@ -179,7 +179,7 @@ pub fn expand_classes(mut program: Program, synthetic: u32) -> Program {
 /// expanded against itself rather than against the prelude.
 pub(super) fn expand_prelude(mut program: Program, synthetic: u32) -> Program {
     expand(&mut program, &mut Vec::new(), &[], synthetic, true);
-    super::indices::expand_indices(&mut program, &mut [], true);
+    super::indices::expand_indices(&mut program, &mut [], &[], true);
     program
 }
 
@@ -213,7 +213,7 @@ pub fn expand_loaded(
     super::coerce::expand_coercions(program, per_file);
     super::lend::expand_lends(program, per_file);
     let made = expand(program, per_file, imported, synthetic, false);
-    super::indices::expand_indices(program, per_file, false);
+    super::indices::expand_indices(program, per_file, &expanded_top(per_file, imported), false);
     made
 }
 
@@ -233,7 +233,7 @@ pub fn expand_loaded_reporting(
     super::coerce::expand_coercions(program, per_file);
     super::lend::expand_lends(program, per_file);
     let made = expand(program, per_file, imported, synthetic, true);
-    super::indices::expand_indices(program, per_file, false);
+    super::indices::expand_indices(program, per_file, &expanded_top(per_file, imported), false);
     made
 }
 
@@ -256,7 +256,7 @@ fn expand(
     inherit_local_where(program);
     // The imported top levels are read with the program, so that their calls
     // get dictionaries; a program that checks without them keeps doing so
-    // when they are what does not check (that is `imported_errors`' to say).
+    // when they are what does not check (that is not reported here).
     let with_imports = with_imported(program, imported);
     let mut checked = with_imports.as_ref().unwrap_or(program);
     let mut report = check_program_in(checked, prelude_source_for(checked));
@@ -303,6 +303,23 @@ fn expand(
     e.made
 }
 
+/// `imported` as the class expansion left it in `per_file`: the top levels of
+/// every file but the entry (the last), in the order `imported` has them.
+fn expanded_top(per_file: &[Vec<Stmt>], imported: &[Stmt]) -> Vec<Stmt> {
+    if imported.is_empty() {
+        return Vec::new();
+    }
+    per_file
+        .split_last()
+        .map(|(_, before)| before)
+        .unwrap_or_default()
+        .iter()
+        .flatten()
+        .filter(|s| runs_at_top_level(s))
+        .cloned()
+        .collect()
+}
+
 /// Whether a statement runs when the file's top level does.
 fn runs_at_top_level(s: &Stmt) -> bool {
     match s {
@@ -318,7 +335,7 @@ fn runs_at_top_level(s: &Stmt) -> bool {
 
 /// `program` with the statements the imported files' top levels would run
 /// placed before its own, after its declarations; `None` when there are none.
-fn with_imported(program: &Program, imported: &[Stmt]) -> Option<Program> {
+pub(super) fn with_imported(program: &Program, imported: &[Stmt]) -> Option<Program> {
     if imported.is_empty() {
         return None;
     }

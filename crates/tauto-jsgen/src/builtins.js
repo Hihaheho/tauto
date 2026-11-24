@@ -36,6 +36,8 @@ function copyWithin(value,active) {
             else if(value?.copy)result=value.copy();
             else if(value?.retain){value.retain();result=value;}
             else if(!value||typeof value!=='object'||value.ref||value.shared||value.resource)result=value;
+            // A host object (a Map, a Set, a class instance) is not Tauto data: copying it field by field would drop its contents. A copy of a host-owned value (an affine one moves) stands for the same object.
+            else if(!Array.isArray(value)&&Object.getPrototypeOf(value)!==Object.prototype&&Object.getPrototypeOf(value)!==null)result=value;
             else if(Array.isArray(value)&&(Array!==copyArray||Object.getPrototypeOf(value)!==copyArrayPrototype||value.map!==copyArrayMap||Object.hasOwn(value,'constructor')||value.constructor!==copyArray||Array[Symbol.species]!==copyArray)){
                 if(active.has(value))throw new Error('cyclic JavaScript value cannot be copied');
                 active.add(value);

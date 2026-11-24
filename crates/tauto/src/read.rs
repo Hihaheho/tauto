@@ -157,7 +157,7 @@ pub fn check(source: &str) -> Result<Vec<Entry>, Message> {
     // still expanded.
     let mut program = parse_program_at(source, 0)?;
     crate::types::expand_coercions(&mut program, &mut []);
-    crate::types::indices::expand_indices(&mut program, &mut [], false);
+    crate::types::indices::expand_indices(&mut program, &mut [], &[], false);
     tauto_surface::resolve::Resolver::default().statements(&mut program.stmts);
     if program
         .stmts
